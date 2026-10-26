@@ -82,6 +82,101 @@ DEFAULT_ACHIEVEMENTS = [
     }
 ]
 
+import json
+
+DEFAULT_PROJECTS = [
+    {
+        "slug": "medisync",
+        "title": "MediSync",
+        "category": "MOBILE PRODUCT / IOT",
+        "summary": "A connected medication adherence platform linking a Flutter mobile app, FastAPI backend services, and a smart ESP32 dispenser prototype.",
+        "description": "MediSync helps patients and caregivers manage medication routines through dosage scheduling, time-sensitive reminders, and an IoT dispenser interface that validates physical dispensing events.",
+        "role": "Flutter & Backend Developer",
+        "year": "2026",
+        "stack": "Flutter, Dart, FastAPI, SQLite, ESP32, REST APIs",
+        "outcome": "Mobile app + hardware dispenser prototype",
+        "accent": "red",
+        "visual": "medisync",
+        "github_url": "https://github.com/tejas388/MediSync",
+        "demo_url": None,
+        "problem": "Missing doses and uncertainty around whether medication was taken can lead to severe health consequences. Traditional pillboxes cannot verify consumption or alert caregivers when a critical dose is skipped.",
+        "architecture": "Flutter Mobile UI <──REST API (JSON)──> FastAPI Services <──SQLAlchemy ORM──> SQLite Storage; ESP32 microcontroller communicates via HTTP/WiFi to receive dispensing commands and transmit physical completion telemetry.",
+        "features": json.dumps([
+            "Customizable daily prescription schedules with specific intake timings and meal relations",
+            "Visual adherence tracking dashboard showing compliance history",
+            "Bi-directional hardware synchronization with ESP32 microcontroller dispenser",
+            "Idempotent dose-logging API endpoints preventing duplicate triggers on flaky connections",
+            "Offline schedule caching in Flutter when network links fluctuate"
+        ]),
+        "challenges": json.dumps([
+            "Handling intermittent connectivity between the dispenser and backend via status reconciliation loops",
+            "Implementing idempotent dispensing endpoints so dropped packets never cause duplicate dosage releases"
+        ]),
+        "status_note": "Functional prototype: The Flutter mobile app and FastAPI backend workflows are tested locally; dispenser mechanics were validated on an ESP32 breadboard rig. Not released to commercial app stores.",
+        "sort_order": 1,
+    },
+    {
+        "slug": "recoverai",
+        "title": "RECOVERAI",
+        "category": "AI / DATA RECOVERY",
+        "summary": "An intelligent file recovery and integrity inspection workflow featuring a React interface and Python FastAPI backend for reconstructing damaged files.",
+        "description": "RECOVERAI explores programmatic file recovery techniques. It provides byte-level header analysis, file signature verification, and automated reconstruction pipelines for damaged media and document formats.",
+        "role": "Full-Stack Developer",
+        "year": "2026",
+        "stack": "React, JavaScript, FastAPI, Python, File Signatures, Hex Analysis",
+        "outcome": "File recovery pipeline & diagnostic UI",
+        "accent": "graphite",
+        "visual": "recoverai",
+        "github_url": "https://github.com/tejas388/RECOVERAI",
+        "demo_url": None,
+        "problem": "Accidental file corruption, interrupted writes, and filesystem errors frequently leave documents unopenable. Non-technical users lack accessible tools to understand if a file is repairable or irrecoverable.",
+        "architecture": "React Frontend (file upload, chunking, recovery logs, hex preview) <──REST Endpoints──> FastAPI Backend (file buffer inspection, magic byte extraction) <──Python Recovery Engine (header reconstruction, signature validation)──> Restored File Artifacts.",
+        "features": json.dumps([
+            "File header and magic-byte integrity inspection for common formats (PNG, JPEG, PDF, DOCX)",
+            "Automated header rebuilding for truncated or partially overwritten file signatures",
+            "Visual recovery feasibility assessment based on container structure",
+            "Interactive hexadecimal previewer displaying file byte offset headers",
+            "Downloadable restored file artifacts with validation checksums"
+        ]),
+        "challenges": json.dumps([
+            "Accurately identifying the threshold between reconstructible header damage and unrecoverable payload entropy loss",
+            "Providing transparent user messaging to avoid overstating recovery chances on encrypted or zero-filled data"
+        ]),
+        "status_note": "Prototype stage: Demonstrates deterministic header reconstruction for common image and text formats. Machine learning synthesis for payload reconstruction is experimental.",
+        "sort_order": 2,
+    },
+    {
+        "slug": "ai-memory-bot",
+        "title": "AI Memory Bot",
+        "category": "LLM / CONVERSATIONAL AI",
+        "summary": "A conversational assistant exploring stateful memory extraction, context retention, and multi-turn retrieval mechanisms using Python and LLM APIs.",
+        "description": "AI Memory Bot investigates long-term conversational memory. It extracts user preferences, constraints, and project details across interactions, selectively retrieving context to produce informed multi-turn responses.",
+        "role": "AI & Python Developer",
+        "year": "2025–2026",
+        "stack": "Python, LLM APIs, Context Management, Vector Embeddings, Prompt Engineering",
+        "outcome": "Context-aware conversational prototype",
+        "accent": "light",
+        "visual": "memory",
+        "github_url": "https://github.com/tejas388/AI_Memory_Bot",
+        "demo_url": None,
+        "problem": "Standard conversational models operate in stateless isolation, requiring users to repeat preferences, constraints, and background details in every new session or after context window boundaries.",
+        "architecture": "Chat Interface / CLI <──User Message──> Memory Ingestion Pipeline (extracts key facts & preferences) <──Memory Store (ephemeral / file-based memory nodes & vector indices)──> Contextual Prompt Formatter <──Injected Context + Query──> LLM API <──Informed Response──> User Stream.",
+        "features": json.dumps([
+            "Automatic fact extraction from conversational dialogue turns",
+            "Semantic similarity retrieval for memory recall within prompt budgets",
+            "Interactive memory inspection tag and memory control panel",
+            "Memory editing and deletion controls for privacy and accuracy",
+            "Token-efficient prompt synthesis and fallback to stateless mode"
+        ]),
+        "challenges": json.dumps([
+            "Mitigating memory hallucination and context drift across multi-turn interactions",
+            "Ensuring retrieved historical facts do not conflict with or override current user instructions"
+        ]),
+        "status_note": "Exploratory research prototype: Evaluates memory scoring and contextual prompt synthesis using Python scripts and LLM APIs. Persistent distributed vector database integration is identified as a next phase.",
+        "sort_order": 3,
+    },
+]
+
 def run_migrations(db: Session):
     """
     Ensures all tables and required columns exist without dropping existing tables.
@@ -111,7 +206,8 @@ def run_migrations(db: Session):
                 conn.execute(text("ALTER TABLE contact_messages ADD COLUMN notification_error VARCHAR(500)"))
             if "notification_sent_at" not in cols:
                 logger.info("Migrating contact_messages table: adding 'notification_sent_at' column")
-                conn.execute(text("ALTER TABLE contact_messages ADD COLUMN notification_sent_at DATETIME"))
+                dt_type = "TIMESTAMPTZ" if engine.dialect.name == "postgresql" else "DATETIME"
+                conn.execute(text(f"ALTER TABLE contact_messages ADD COLUMN notification_sent_at {dt_type}"))
             conn.commit()
 
         if "portfolio_visits" in table_names:
@@ -164,4 +260,18 @@ def run_migrations(db: Session):
                 existing.display_order = ach_data["display_order"]
             else:
                 db.add(Achievement(**ach_data))
+        db.commit()
+
+    # 5. Seed default projects if empty, or ensure project years match current timeline
+    proj_count = db.query(Project).count()
+    if proj_count == 0:
+        logger.info("Seeding verified projects into database")
+        for p in DEFAULT_PROJECTS:
+            db.add(Project(**p))
+        db.commit()
+    else:
+        for p in DEFAULT_PROJECTS:
+            existing = db.query(Project).filter(Project.slug == p["slug"]).first()
+            if existing and existing.year != p["year"]:
+                existing.year = p["year"]
         db.commit()

@@ -1,145 +1,158 @@
-"""
-Email notification service for Tejas CK Portfolio.
-Supports Gmail SMTP with STARTTLS and App Password authentication.
-Includes defensive error handling, timeout protection, retry management,
-and simulated mode when SMTP credentials are not yet configured.
-"""
+"""Email notifications for the portfolio, delivered using Resend's HTTPS API."""
+
+import json
 import logging
 import os
-import smtplib
+import socket
 import ssl
 from datetime import datetime, timezone
-from zoneinfo import ZoneInfo
-from email.message import EmailMessage
 from typing import Optional, Tuple
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
+
 from sqlalchemy.orm import Session
 from .models import ContactMessage
 
-IST_TZ = ZoneInfo("Asia/Kolkata")
-
 try:
     import certifi
-    CA_FILE = certifi.where()
+    _CA_FILE = certifi.where()
 except ImportError:
-    CA_FILE = None
+    _CA_FILE = None
 
+IST_TZ = ZoneInfo("Asia/Kolkata")
 logger = logging.getLogger("portfolio.email")
 
-def create_verified_ssl_context() -> ssl.SSLContext:
-    """
-    Creates an SSL context with certificate and hostname verification strictly enabled.
-    Supplies certifi's vetted Mozilla CA bundle to prevent SSLCertVerificationError on macOS.
-    """
-    if CA_FILE:
-        return ssl.create_default_context(cafile=CA_FILE)
-    return ssl.create_default_context()
+
+def _get_ssl_context() -> ssl.SSLContext:
+    """Creates a strictly verified SSL context with a trusted CA bundle."""
+    if _CA_FILE:
+        context = ssl.create_default_context(cafile=_CA_FILE)
+    else:
+        context = ssl.create_default_context()
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+    return context
+
 
 def get_smtp_config():
-    """Reads SMTP configuration from environment with secure defaults."""
-    host = os.getenv("SMTP_HOST", "smtp.gmail.com").strip()
-    port_str = os.getenv("SMTP_PORT", "587").strip()
-    try:
-        port = int(port_str)
-    except ValueError:
-        port = 587
-
-    username = os.getenv("SMTP_USERNAME", "").strip()
-    app_password = os.getenv("SMTP_APP_PASSWORD", "").strip()
-    from_email = os.getenv("NOTIFICATION_FROM_EMAIL", "").strip() or username or "noreply@portfolio.local"
-    to_email = os.getenv("NOTIFICATION_TO_EMAIL", "").strip() or username or "tejas2005patel@gmail.com"
-    use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
-    
-    timeout_str = os.getenv("SMTP_TIMEOUT", "10").strip()
-    try:
-        timeout = int(timeout_str)
-    except ValueError:
-        timeout = 10
-
+    """Legacy-compatible configuration helper; delivery now uses Resend."""
     return {
-        "host": host,
-        "port": port,
-        "username": username,
-        "app_password": app_password,
-        "from_email": from_email,
-        "to_email": to_email,
-        "use_tls": use_tls,
-        "timeout": timeout,
+        "api_key": os.getenv("RESEND_API_KEY", "").strip(),
+        "from_email": os.getenv("NOTIFICATION_FROM_EMAIL", "").strip(),
+        "to_email": os.getenv(
+            "NOTIFICATION_TO_EMAIL", "tejas2005patel@gmail.com"
+        ).strip(),
+        "timeout": 15,
     }
 
+
 def is_smtp_configured() -> bool:
-    """Checks whether SMTP credentials are fully provided."""
+    """Keep the legacy function name so existing imports continue to work."""
     config = get_smtp_config()
-    return bool(config["username"] and config["app_password"])
+    return bool(
+        config["api_key"] and config["from_email"] and config["to_email"]
+    )
+
 
 def send_email_smtp(
     subject: str,
     text_body: str,
     html_body: Optional[str] = None,
-    to_email: Optional[str] = None
+    to_email: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """
-    Sends an email via Gmail SMTP using STARTTLS.
-    Never exposes passwords in logs or exceptions.
+    Send an email through Resend HTTPS API.
     Returns (success: bool, status_message: str).
+    Guarantees strict TLS certificate verification and safe diagnostic logging.
     """
     config = get_smtp_config()
     target_to = to_email or config["to_email"]
 
-    if not config["username"] or not config["app_password"]:
-        logger.info(
-            "SMTP credentials not configured (simulation mode). Email not dispatched: '%s' -> %s",
-            subject,
-            target_to
-        )
-        return True, "Simulation mode: SMTP credentials not set. Message recorded locally."
+    if not config["api_key"]:
+        logger.error("Email not sent: RESEND_API_KEY is not configured.")
+        return False, "Email delivery is not configured: missing RESEND_API_KEY."
+    if not config["from_email"] or not target_to:
+        logger.error("Email not sent: sender (%s) or recipient (%s) is missing.", bool(config["from_email"]), bool(target_to))
+        return False, "Email sender or recipient is not configured."
 
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = config["from_email"]
-    msg["To"] = target_to
-    msg.set_content(text_body)
-
+    payload = {
+        "from": config["from_email"],
+        "to": [target_to],
+        "subject": subject,
+        "text": text_body,
+    }
     if html_body:
-        msg.add_alternative(html_body, subtype="html")
+        payload["html"] = html_body
 
-    server = None
+    request = Request(
+        "https://api.resend.com/emails",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {config['api_key']}",
+            "Content-Type": "application/json",
+            "User-Agent": "Tejas-Portfolio/1.0",
+        },
+        method="POST",
+    )
+
     try:
-        if config["port"] == 465:
-            # SSL
-            context = create_verified_ssl_context()
-            server = smtplib.SMTP_SSL(config["host"], config["port"], timeout=config["timeout"], context=context)
+        ssl_ctx = _get_ssl_context()
+        with urlopen(request, timeout=config["timeout"], context=ssl_ctx) as response:
+            response_body = response.read().decode("utf-8", errors="replace")
+            if response.status not in (200, 201):
+                logger.error("Resend API returned unexpected HTTP status %s.", response.status)
+                return False, f"Email provider returned HTTP {response.status}."
+
+        try:
+            result = json.loads(response_body)
+        except json.JSONDecodeError:
+            result = {}
+
+        email_id = result.get("id")
+        logger.info("Email accepted by Resend (id: %s) for recipient %s.", email_id or 'unknown', target_to)
+        return True, f"Email accepted by Resend for processing (id: {email_id or 'accepted'}). Note: Acceptance indicates queued for dispatch; delivery depends on recipient server acceptance."
+
+    except HTTPError as exc:
+        # Never log Authorization header or API keys
+        try:
+            raw_err = exc.read().decode("utf-8", errors="replace")[:400]
+            err_json = json.loads(raw_err)
+            err_msg = err_json.get("message") or err_json.get("name") or raw_err
+        except Exception:
+            err_msg = str(exc)
+
+        if exc.code == 401:
+            category = "Authentication failed (invalid or expired RESEND_API_KEY)"
+        elif exc.code in (403, 422):
+            category = "Sender or recipient policy restriction (e.g. unverified domain or sandbox limitation)"
+        elif exc.code == 429:
+            category = "Rate limit exceeded on Resend API"
         else:
-            # STARTTLS
-            server = smtplib.SMTP(config["host"], config["port"], timeout=config["timeout"])
-            server.ehlo()
-            if config["use_tls"]:
-                context = create_verified_ssl_context()
-                server.starttls(context=context)
-                server.ehlo()
+            category = f"Resend API error (HTTP {exc.code})"
 
-        server.login(config["username"], config["app_password"])
-        server.send_message(msg)
-        logger.info("Email notification delivered successfully to %s: '%s'", target_to, subject)
-        return True, "Email sent successfully."
+        logger.error("Resend HTTP rejection [HTTP %s]: %s — detail: %s", exc.code, category, err_msg)
+        return False, f"Resend rejected email (HTTP {exc.code}): {category}. {err_msg}"
 
-    except smtplib.SMTPAuthenticationError:
-        err = "Authentication failed. Please verify your Gmail App Password."
-        logger.error("SMTP Authentication Error when sending to %s", target_to)
-        return False, err
-    except (smtplib.SMTPException, TimeoutError, OSError) as exc:
-        err = f"SMTP transmission error: {type(exc).__name__}"
-        logger.error("SMTP error sending email to %s: %s", target_to, type(exc).__name__)
-        return False, err
+    except URLError as exc:
+        reason = exc.reason
+        if isinstance(reason, ssl.SSLCertVerificationError):
+            logger.error("Resend TLS certificate verification failed: %s", reason)
+            return False, f"TLS certificate verification error: {reason}."
+        if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason).lower():
+            logger.error("Resend connection timed out: %s", reason)
+            return False, f"Connection timed out while reaching Resend API: {reason}."
+        logger.error("Resend network connection failed (%s): %s", type(reason).__name__, reason)
+        return False, f"Network connection error to Resend API ({type(reason).__name__}): {reason}."
+
+    except TimeoutError as exc:
+        logger.error("Resend request timed out after %s seconds: %s", config["timeout"], exc)
+        return False, f"Resend request timed out after {config['timeout']} seconds."
+
     except Exception as exc:
-        err = f"Unexpected email error: {type(exc).__name__}"
-        logger.error("Unexpected error in email dispatch: %s", type(exc).__name__)
-        return False, err
-    finally:
-        if server:
-            try:
-                server.quit()
-            except Exception:
-                pass
+        logger.error("Unexpected email service error: %s: %s", type(exc).__name__, exc)
+        return False, f"Unexpected email error: {type(exc).__name__}."
+
 
 def send_contact_notification(db: Session, message_id: int) -> bool:
     """

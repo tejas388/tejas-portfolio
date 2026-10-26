@@ -15,6 +15,11 @@ DEFAULT_DB_FILE = DATA_DIR / "portfolio.db"
 env_db_url = os.getenv("DATABASE_URL")
 if not env_db_url:
     DATABASE_URL = f"sqlite:///{DEFAULT_DB_FILE}"
+elif env_db_url.startswith("postgres://"):
+    # Render, Heroku, and Neon provide postgres:// or postgresql://; SQLAlchemy 2.0 requires postgresql+psycopg:// for psycopg3
+    DATABASE_URL = env_db_url.replace("postgres://", "postgresql+psycopg://", 1)
+elif env_db_url.startswith("postgresql://") and not env_db_url.startswith("postgresql+"):
+    DATABASE_URL = env_db_url.replace("postgresql://", "postgresql+psycopg://", 1)
 elif env_db_url in ("sqlite:///./portfolio.db", "sqlite:///portfolio.db"):
     DATABASE_URL = f"sqlite:///{DEFAULT_DB_FILE}"
 elif env_db_url.startswith("sqlite:///./data/"):
@@ -32,8 +37,23 @@ elif DATABASE_URL.startswith("sqlite:///"):
     sqlite_path = Path(DATABASE_URL.replace("sqlite:///", ""))
     sqlite_path.parent.mkdir(parents=True, exist_ok=True)
 
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-engine = create_engine(DATABASE_URL, connect_args=connect_args, pool_pre_ping=True)
+is_sqlite = DATABASE_URL.startswith("sqlite")
+
+if is_sqlite:
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        pool_pre_ping=True
+    )
+else:
+    # PostgreSQL pooling optimized for Render Free web service + Neon serverless PostgreSQL
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        pool_size=5,
+        max_overflow=5
+    )
 
 if DATABASE_URL.startswith("sqlite"):
     @event.listens_for(engine, "connect")

@@ -29,8 +29,11 @@ __pycache__/
 # Operating system files
 .DS_Store
 Thumbs.db
+*.bak
+*.backup
 
 # Ignore environment variants
 .env.*
 !.env.example
 backend/.env.*
+!backend/.env.example

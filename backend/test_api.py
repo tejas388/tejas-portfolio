@@ -11,10 +11,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 # Add backend directory to sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+BASE_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE_DIR))
+
+# Use isolated temporary test database to guarantee real production/local data is preserved
+TEST_DB_FILE = BASE_DIR / "data" / "test_portfolio.db"
+os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_FILE}"
 
 from app.main import app, _rate_limits
-from app.database import SessionLocal, DATABASE_URL
+from app.database import engine, SessionLocal, DATABASE_URL
 from app.models import Project, ContactMessage, PortfolioVisit, Certification, Achievement
 from app.migrations import run_migrations
 from app.email_service import send_contact_notification, retry_failed_notifications
@@ -415,14 +420,15 @@ async def run_tests():
         print("✔ [14/14] Secured internal admin endpoints passed (HTTP 401 on unauthorized, HTTP 200 with X-Admin-Key)")
 
     finally:
-        # Cleanup test records to preserve real database records
-        with SessionLocal() as db:
-            if test_emails_to_cleanup:
-                db.query(ContactMessage).filter(ContactMessage.email.in_(test_emails_to_cleanup)).delete(synchronize_session=False)
-            if test_visitors_to_cleanup:
-                db.query(PortfolioVisit).filter(PortfolioVisit.visitor_id.in_(test_visitors_to_cleanup)).delete(synchronize_session=False)
-            db.commit()
-        print("✔ Cleaned up test-inserted records from database.")
+        # Dispose engine connections so test database file can be cleanly removed
+        engine.dispose()
+        for f in (TEST_DB_FILE, Path(str(TEST_DB_FILE) + "-wal"), Path(str(TEST_DB_FILE) + "-shm")):
+            try:
+                if f.exists():
+                    f.unlink()
+            except Exception:
+                pass
+        print("✔ Cleaned up temporary test database (real data completely untouched).")
 
     print("\n==================================================")
     print("ALL 14 BACKEND VERIFICATIONS COMPLETED SUCCESSFULLY!")

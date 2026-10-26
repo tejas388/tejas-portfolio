@@ -1,0 +1,43 @@
+name: Daily Visitor Summary Report
+
+on:
+  schedule:
+    # 14:30 UTC = 8:00 PM Indian Standard Time (IST)
+    - cron: '30 14 * * *'
+  workflow_dispatch: # Enables 1-click test triggers from GitHub Actions UI
+
+jobs:
+  trigger-summary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Daily Summary on Render Backend
+        run: |
+          if [ -z "${{ secrets.PORTFOLIO_BACKEND_URL }}" ]; then
+            echo "Error: PORTFOLIO_BACKEND_URL secret is not configured in GitHub repository."
+            echo "Please add PORTFOLIO_BACKEND_URL (e.g. https://your-backend.onrender.com) in Repository Secrets."
+            exit 1
+          fi
+
+          ADMIN_KEY="${{ secrets.PORTFOLIO_ADMIN_KEY }}"
+          HEADER_PARAM=()
+          if [ -n "$ADMIN_KEY" ]; then
+            HEADER_PARAM=(-H "X-Admin-Key: $ADMIN_KEY")
+          fi
+
+          echo "Triggering portfolio summary report at 8:00 PM IST..."
+          RESPONSE=$(curl -sS -w "\nHTTP_STATUS:%{http_code}" -X POST \
+            "${{ secrets.PORTFOLIO_BACKEND_URL }}/api/internal/send-visitor-summary?hours=24" \
+            "${HEADER_PARAM[@]}")
+
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d':' -f2)
+          BODY=$(echo "$RESPONSE" | grep -v "HTTP_STATUS:")
+
+          echo "HTTP Status: $HTTP_STATUS"
+          echo "Response: $BODY"
+
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "Failed: Endpoint returned HTTP $HTTP_STATUS"
+            exit 1
+          fi
+
+          echo "Summary successfully triggered and dispatched via Resend."

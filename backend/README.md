@@ -243,25 +243,27 @@ X-Admin-Key: portfolio-admin-secret-2026
 
 ---
 
-## 3. Email Notification & Daily Summary Setup
+## 3. Email Notification & Resend Setup
 
-### Gmail App Password Configuration
+Email delivery uses the **Resend HTTPS API** (`https://api.resend.com/emails`) over strictly verified TLS connections using `certifi`.
 
-1. Visit **Google Account Security** > **2-Step Verification**.
-2. Scroll to the bottom and select **App passwords**.
-3. Create a new App Password named `Portfolio Website`.
-4. Copy the generated 16-character code (e.g. `xhwhszihqhmgiztt`).
-5. Set the following environment variables in `backend/.env`:
+### Resend API Configuration
+
+1. Create a free account at [Resend.com](https://resend.com).
+2. Generate an API Key under **API Keys** with "Sending access".
+3. Configure the following environment variables in `backend/.env` (and Render Dashboard in production):
 
 ```ini
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USERNAME=tejas2005patel@gmail.com
-SMTP_APP_PASSWORD=your_16_character_app_password
-NOTIFICATION_FROM_EMAIL=tejas2005patel@gmail.com
+# Resend email delivery credentials
+RESEND_API_KEY=re_your_actual_resend_api_key
+NOTIFICATION_FROM_EMAIL=onboarding@resend.dev
 NOTIFICATION_TO_EMAIL=tejas2005patel@gmail.com
-ADMIN_SECRET_KEY=portfolio-admin-secret-2026
+ADMIN_SECRET_KEY=your-secure-admin-secret-token
 ```
+
+### Sender & Domain Restrictions:
+- **Sandbox Mode (`onboarding@resend.dev`):** Resend permits sending exclusively to the email address registered with your Resend account (`tejas2005patel@gmail.com`). This is ideal for receiving contact inquiries, visitor alerts, and daily summaries.
+- **Production Custom Domain:** To send from a custom address (e.g., `contact@yourdomain.com`), navigate to Resend > **Domains**, add your domain, and configure the required DKIM/SPF DNS records. Once verified, update `NOTIFICATION_FROM_EMAIL=Tejas CK <contact@yourdomain.com>`.
 
 ### CLI Visitor Summary Runner
 
@@ -278,17 +280,48 @@ python backend/send_summary.py
 python backend/send_summary.py --hours 48
 ```
 
-### Automated Daily Cron Job
+---
 
-To receive an automated summary every evening at 8:00 PM:
+## 4. Production Deployment & Scheduled Automation
 
-```bash
-crontab -e
-```
-Add the following line (substitute your workspace path):
-```bash
-0 20 * * * cd /Users/tejasck/Downloads/tejas-portfolio-v3 && backend/.venv/bin/python backend/send_summary.py >> backend/data/summary_cron.log 2>&1
-```
+### Backend Deployment (Render Free)
+
+1. Connect your repository (`https://github.com/tejas388/tejas-portfolio`) to Render.
+2. Create a new **Web Service** with the following settings:
+   - **Root Directory:** `backend`
+   - **Environment:** `Python 3`
+   - **Build Command:** `pip install -r requirements.txt`
+   - **Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+3. Configure Environment Variables in Render:
+   - `RESEND_API_KEY`: Your real Resend API key
+   - `NOTIFICATION_FROM_EMAIL`: `onboarding@resend.dev` (or custom verified domain)
+   - `NOTIFICATION_TO_EMAIL`: `tejas2005patel@gmail.com`
+   - `ADMIN_SECRET_KEY`: A strong private secret token
+   - `CORS_ORIGINS`: `https://your-portfolio.vercel.app,http://localhost:5173`
+   - `DATABASE_URL`: (Optional) Free PostgreSQL connection string (see Database Persistence below)
+
+### Frontend Deployment (Vercel)
+
+1. Import the repository root on Vercel.
+2. Configure Environment Variable:
+   - `VITE_API_BASE_URL`: `https://your-backend.onrender.com`
+3. Build Command: `npm run build`
+4. Output Directory: `dist`
+
+### Database Persistence on Render Free
+
+- **Render Free Ephemeral Filesystem:** Free Render web services use an ephemeral disk that resets when the service spins down or restarts. While default project and certification data will automatically re-seed, contact messages and visitor history in local SQLite are lost upon container recreation.
+- **Recommended Free Solution:** Connect a free managed PostgreSQL database (such as Neon.tech, Supabase, or Render Free PostgreSQL) and supply its connection string via `DATABASE_URL`. The backend includes `psycopg` and automatically normalizes `postgres://` to `postgresql://` for full SQLAlchemy compatibility.
+
+### Automated Daily Summary at 8:00 PM IST (14:30 UTC)
+
+Because Render Free web services spin down after 15 minutes of inactivity, internal cron schedulers cannot run reliably inside a sleeping container.
+
+- **Configured GitHub Actions Workflow:** The repository includes `.github/workflows/daily-visitor-summary.yml`, which triggers daily at 14:30 UTC (8:00 PM IST).
+- Set two GitHub Repository Secrets under **Settings > Secrets and variables > Actions**:
+  - `PORTFOLIO_BACKEND_URL`: `https://your-backend.onrender.com`
+  - `PORTFOLIO_ADMIN_KEY`: Same value as your backend's `ADMIN_SECRET_KEY`
+- The workflow pings the Render backend, waking it up and triggering summary generation and email delivery via Resend.
 
 ---
 

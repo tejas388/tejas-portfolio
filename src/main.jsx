@@ -2415,7 +2415,7 @@ function formatContactApiError(statusCode, data, error) {
     return error.message;
   }
 
-  return "Could not connect to the backend server. Please verify the backend is running at http://localhost:8000 or email directly.";
+  return `Could not connect to the backend service. Please try again or reach out directly at ${CONFIG.email}.`;
 }
 
 function App() {
