@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+backend/.venv/
+.venv/
+
+# Production builds
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+backend/.env
+
+# SQLite Databases & Storage
+backend/data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Python bytecode & cache
+__pycache__/
+*/__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Ignore environment variants
+.env.*
+!.env.example
+backend/.env.*
